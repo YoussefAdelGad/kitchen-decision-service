@@ -6,6 +6,7 @@
 | run_981ab866d4 | step 1: model reads notes, code sets flag | **−14,750** | 4,772 | 0 | 0 | 9 | 12 | 6,108 | 0 | 0 |
 | run_ab23cb9b43 | step 2: stock for all items, 4-station queue, computed promise, cancel-risk rejection, run reset | **3,816** | 3,834 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
 | run_0b130b41bd | hardened, first run on Render: catch-all, deadline, threads + lock, keyword hedge, learned buffer, signature check | **3,703** | 3,764 | 0 | 1 | 0 | 4 | 0 | 0 | 0 |
+| run 5 | after the two run-4 fixes (hedge scoping, retry primary on 429), on Render | **3,816** | — | 0 | 0 | 0 | — | 0 | 0 | 0 |
 
 Offline replay estimate for the step 2 rules is 3,904 (assumes the note reader is perfect).
 
