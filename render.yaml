@@ -1,0 +1,17 @@
+# Render blueprint: one free web service, single instance, built from the Dockerfile.
+services:
+  - type: web
+    name: kitchen-decision-service
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    healthCheckPath: /kitchen
+    autoDeploy: true
+    envVars:
+      - key: MODEL_API_KEY
+        sync: false          # entered once in the Render dashboard, never stored in git
+      - key: IMDAD_SIGNING_SECRET
+        sync: false
+      - key: SIGNATURE_MODE
+        value: enforce
