@@ -38,6 +38,7 @@ def fake_model(monkeypatch):
             raise RuntimeError("model exploded")
         return FACTS.get(note, NONE)
     monkeypatch.setattr(service, "read_note", fake_read_note)
+    monkeypatch.setattr(service, "SIGNATURE_MODE", "off")   # signature tests switch it on themselves
     service.reset_state(None)
     yield
 
@@ -382,3 +383,63 @@ def test_delivered_without_lateness_changes_nothing(client):
     client.post("/kitchen", json={"type": "ORDER_DELIVERED", "order_id": "A", "minute": 6, "minutes_late": 0},
                 headers={"X-Imdad-Run-Id": "t"})
     assert order(client, ["garden_salad"], minute=10, order_id="B")["promised_minutes"] == base
+
+
+# ---------------------------------------------------------------- webhook signature
+
+def _signed_headers(body_bytes, secret, ts="1789459200"):
+    import hashlib as _h, hmac as _m
+    mac = _m.new(secret.encode(), f"{ts}.".encode() + body_bytes, _h.sha256).hexdigest()
+    return {"X-Imdad-Run-Id": "t", "X-Imdad-Timestamp": ts, "X-Imdad-Signature": "sha256=" + mac}
+
+
+@pytest.fixture
+def signed(monkeypatch):
+    monkeypatch.setattr(service, "IMDAD_SIGNING_SECRET", "whsec_test")
+    monkeypatch.setattr(service, "SIGNATURE_MODE", "enforce")
+    monkeypatch.setattr(service, "signature_failures", 0)
+    return "whsec_test"
+
+
+def test_valid_signature_is_accepted(client, signed):
+    body = json.dumps({"type": "ORDER_PLACED", "order_id": "O", "minute": 1, "items": ["garden_salad"], "value_aed": 24}).encode()
+    r = client.post("/kitchen", data=body, content_type="application/json", headers=_signed_headers(body, signed))
+    assert r.status_code == 200 and r.get_json()["decision"] == "accept"
+
+
+def test_wrong_secret_is_refused_and_touches_no_state(client, signed):
+    body = json.dumps({"type": "ORDER_PLACED", "order_id": "O", "minute": 1, "items": ["satay_skewers"], "value_aed": 34}).encode()
+    r = client.post("/kitchen", data=body, content_type="application/json", headers=_signed_headers(body, "wrong"))
+    assert r.status_code == 401
+    assert service.stock["peanut_sauce"] == 30 and service.signature_failures == 1
+
+
+def test_missing_signature_is_refused(client, signed):
+    r = client.post("/kitchen", json={"type": "ORDER_PLACED", "order_id": "O", "items": ["garden_salad"]}, headers={"X-Imdad-Run-Id": "t"})
+    assert r.status_code == 401
+
+
+def test_tampered_body_is_refused(client, signed):
+    body = json.dumps({"type": "ORDER_PLACED", "order_id": "O", "minute": 1, "items": ["garden_salad"], "value_aed": 24}).encode()
+    headers = _signed_headers(body, signed)
+    tampered = body.replace(b"garden_salad", b"satay_skewers")
+    assert client.post("/kitchen", data=tampered, content_type="application/json", headers=headers).status_code == 401
+
+
+def test_log_mode_counts_but_still_answers(client, signed, monkeypatch):
+    monkeypatch.setattr(service, "SIGNATURE_MODE", "log")
+    r = client.post("/kitchen", json={"type": "ORDER_PLACED", "order_id": "O", "minute": 1, "items": ["garden_salad"], "value_aed": 24}, headers={"X-Imdad-Run-Id": "t"})
+    assert r.status_code == 200 and r.get_json()["decision"] == "accept" and service.signature_failures == 1
+
+
+def test_guide_reference_vector_matches_our_check(signed):
+    """The Guide's own reference implementation, run against ours on the same inputs."""
+    import hashlib as _h, hmac as _m
+    def guide_valid(secret, timestamp, body_bytes, header):
+        mac = _m.new(secret.encode(), f"{timestamp}.".encode() + body_bytes, _h.sha256).hexdigest()
+        return _m.compare_digest("sha256=" + mac, header)
+    body = b'{"event_id": "EVT-0143", "type": "ORDER_PLACED"}'
+    h = _signed_headers(body, signed)
+    assert guide_valid(signed, h["X-Imdad-Timestamp"], body, h["X-Imdad-Signature"])
+    with service.app.test_request_context("/kitchen", method="POST", data=body, headers=h):
+        assert service.signature_valid(service.request)

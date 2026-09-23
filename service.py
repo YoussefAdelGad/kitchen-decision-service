@@ -8,6 +8,8 @@ Repair log (lines marked "# OLD:" are the inherited code, kept for the review):
            note's facts with the menu allergens. Key and menu come from env/world.json.
 """
 
+import hashlib
+import hmac
 import json
 import os
 import threading
@@ -24,6 +26,22 @@ app = Flask(__name__)
 # OLD: GROQ_API_KEY = "gsk_REPLACE-ME-WITH-YOUR-OWN-KEY-000000000000"
 MODEL_API_KEY = os.environ["MODEL_API_KEY"]          # fail fast at startup if missing
 MODEL_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# Webhook signature (Guide, "Verifying our signature"): HMAC-SHA256 over "{timestamp}." + body.
+# SIGNATURE_MODE: enforce = refuse bad signatures with 401; log = accept but count them; off = skip.
+IMDAD_SIGNING_SECRET = os.environ.get("IMDAD_SIGNING_SECRET", "")
+SIGNATURE_MODE = os.environ.get("SIGNATURE_MODE", "enforce" if IMDAD_SIGNING_SECRET else "off")
+signature_failures = 0
+
+
+def signature_valid(req):
+    """True if the request's X-Imdad-Signature matches our secret."""
+    timestamp = req.headers.get("X-Imdad-Timestamp", "")
+    header = req.headers.get("X-Imdad-Signature", "")
+    mac = hmac.new(IMDAD_SIGNING_SECRET.encode(),
+                   f"{timestamp}.".encode() + req.get_data(),
+                   hashlib.sha256).hexdigest()
+    return hmac.compare_digest("sha256=" + mac, header)
 # OLD: MODEL_NAME = "openai/gpt-oss-20b"
 # Tried in order; each model has its own free-tier bucket (~30 req/min, 8,000 tokens/min).
 # gpt-oss models are reasoning models: give them room (max_tokens) or they return nothing.
@@ -232,7 +250,13 @@ def kitchen():
     """Catch-all: whatever goes wrong inside, the arena gets a valid JSON answer.
     A 500 is recorded as a rejection anyway, but with no reason and no allergy flag,
     and it looks like an outage. (The inherited code returned 500 on 53 of 150 orders.)"""
+    global signature_failures
     try:
+        if SIGNATURE_MODE != "off" and not signature_valid(request):
+            signature_failures += 1
+            print("bad signature from", request.remote_addr, "mode", SIGNATURE_MODE)
+            if SIGNATURE_MODE == "enforce":
+                return jsonify({"error": "invalid signature"}), 401
         return _kitchen()
     except Exception as e:  # noqa: BLE001 - deliberate: this is the last line of defence
         print("internal error:", type(e).__name__, e)
@@ -388,6 +412,7 @@ def decide(order_id, items, minute, facts, allergy):
 def health():
     try:
         return jsonify({"ok": True, "run": current_run, "accepted": accepted, "rejected": rejected,
+                        "signature_mode": SIGNATURE_MODE, "signature_failures": signature_failures,
                         "station_free": station_free, "late_buffer": late_buffer,
                         "stock": stock, "note_cache": len(NOTE_CACHE)})
     except:
