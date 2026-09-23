@@ -16,3 +16,11 @@ FIFO, cook = sum of items + 3 if flagged, 1 minute pickup).
 Remaining costs in step 2: two cancellations (18 AED). One note ("sorry I had to cancel the
 last two orders") the model did not read as a cancel risk; one key account served with a
 27-minute promise cancelled anyway.
+
+| run_0b130b41bd | hardened, on Render (catch-all, deadline, threads+lock, hedge, learned buffer, signature) | **3,703** | 3,764 | 0 | 1 | 0 | 4 | 0 | 0 | 0 |
+
+Run 4 (first on the real host): the one false alarm was the keyword hedge firing on
+"only having the salad" after the model answered with an empty allergen list plus a scoped
+eater; the two extra cancellations were two notes read by the backup model after the primary
+was rate-limited twice in the rush. Both fixed after this run: the hedge stands down when the
+model scoped the eater, and the primary is retried once after a 429 before any backup answers.

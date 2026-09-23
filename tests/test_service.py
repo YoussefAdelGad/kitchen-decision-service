@@ -443,3 +443,44 @@ def test_guide_reference_vector_matches_our_check(signed):
     assert guide_valid(signed, h["X-Imdad-Timestamp"], body, h["X-Imdad-Signature"])
     with service.app.test_request_context("/kitchen", method="POST", data=body, headers=h):
         assert service.signature_valid(service.request)
+
+
+# ---------------------------------------------------------------- rate-limit retry and hedge scoping
+
+def test_primary_is_retried_once_after_a_429_then_backups(monkeypatch):
+    calls = []
+    class R:
+        def __init__(self, code, content=None): self.status_code = code; self._c = content
+        def json(self): return {"choices": [{"message": {"content": self._c}}]}
+    answers = iter([R(429), R(200, '{"allergens": ["peanut"], "eater_items": null, "key_account": false, "cancel_risk": true}')])
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(json["model"]); return next(answers)
+    monkeypatch.setattr(service.requests, "post", fake_post)
+    monkeypatch.setattr(service, "RATE_LIMIT_RETRY_SECONDS", 0.01)
+    service.NOTE_CACHE.pop("my friend might have already ordered", None)
+    facts = REAL_READ_NOTE("my friend might have already ordered")
+    assert calls == [service.MODELS[0][0], service.MODELS[0][0]]     # primary, then primary again
+    assert facts["cancel_risk"] is True and facts["ai_used"] is True
+
+
+def test_two_429s_on_primary_fall_to_the_backup(monkeypatch):
+    calls = []
+    class R:
+        def __init__(self, code, content=None): self.status_code = code; self._c = content
+        def json(self): return {"choices": [{"message": {"content": self._c}}]}
+    answers = iter([R(429), R(429), R(200, '{"allergens": [], "eater_items": null, "key_account": true, "cancel_risk": false}')])
+    def fake_post(url, headers=None, json=None, timeout=None):
+        calls.append(json["model"]); return next(answers)
+    monkeypatch.setattr(service.requests, "post", fake_post)
+    monkeypatch.setattr(service, "RATE_LIMIT_RETRY_SECONDS", 0.01)
+    service.NOTE_CACHE.pop("we order from you three times a week", None)
+    facts = REAL_READ_NOTE("we order from you three times a week")
+    assert calls == [service.MODELS[0][0], service.MODELS[0][0], service.MODELS[1][0]]
+    assert facts["key_account"] is True
+
+
+def test_hedge_does_not_fire_when_model_scoped_eaters_but_listed_no_allergens(client, monkeypatch):
+    # Real answer seen from the model for "only having the salad": allergens [] and eater_items [garden_salad]
+    monkeypatch.setattr(service, "read_note", lambda note: {**NONE, "allergens": [], "eater_items": ["garden_salad"]})
+    r = order(client, ["chicken_wrap"], note="my wife is allergic to sesame but she is only having the salad, the rest is mine")
+    assert r["allergy_risk"] is False

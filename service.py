@@ -190,6 +190,7 @@ def fallback_read(note):
 # OLD:     text = text.replace("```json", "").replace("```", "")
 # OLD:     return json.loads(text)
 MODEL_DEADLINE_SECONDS = 6.0   # total across all model attempts; the arena allows 10 for the whole answer
+RATE_LIMIT_RETRY_SECONDS = 2.0  # Groq's 429 says "try again in ~2s"; one retry of the primary before backups
 
 
 def read_note(note):
@@ -201,7 +202,11 @@ def read_note(note):
     if key in NOTE_CACHE:
         return NOTE_CACHE[key]
     deadline = time.monotonic() + MODEL_DEADLINE_SECONDS
-    for model, timeout, extra in MODELS:
+    # Attempt order: primary, primary again after a short wait if it was rate-limited,
+    # then the backups. Retrying the primary keeps the reading of tricky notes consistent
+    # between runs; the backups only answer when the primary is truly unavailable.
+    attempts = [MODELS[0], MODELS[0]] + list(MODELS[1:])
+    for i, (model, timeout, extra) in enumerate(attempts):
         remaining = deadline - time.monotonic()
         if remaining < 0.5:
             print("model deadline spent; falling back")
@@ -215,6 +220,11 @@ def read_note(note):
                       "messages": [{"role": "system", "content": NOTE_PROMPT},
                                    {"role": "user", "content": note}]},
                 timeout=min(timeout, remaining))
+            if r.status_code == 429 and i == 0:
+                wait = min(RATE_LIMIT_RETRY_SECONDS, max(0.0, deadline - time.monotonic() - 1.0))
+                print("model", model, "rate limited; retrying in", round(wait, 1), "s")
+                time.sleep(wait)
+                continue
             if r.status_code != 200:
                 print("model", model, "status", r.status_code)
                 continue
@@ -325,8 +335,10 @@ def _kitchen():
     allergy = allergy_risk(facts, items)
     # Enhancement 1 - second opinion. If the model saw no allergen at all but the keyword
     # reader finds one that is in this order, flag it: a wrong flag costs 25, a miss costs 500.
-    # When the model did name allergens (even scoped to someone not eating) we trust the model.
-    if not allergy and facts["ai_used"] and not facts["allergens"]:
+    # We trust the model when it named allergens OR when it scoped who is eating
+    # (eater_items not null): "she is only having the salad" comes back as no allergens
+    # with eater_items=[garden_salad], and that is a deliberate answer, not a miss.
+    if not allergy and facts["ai_used"] and not facts["allergens"] and facts["eater_items"] is None:
         if allergy_risk(fallback_read(note), items):
             allergy = True
             print("hedge: keyword reader flagged", order_id, repr(note[:60]))
