@@ -1,0 +1,24 @@
+Subject: Kitchen Decision Service — submission (Youssef Adel Gad)
+
+Hello,
+
+Please find my submission for the Kitchen Decision Service assignment.
+
+1. Review document (2 pages, attached): what was wrong ranked by cost, what I fixed and what each fix was worth, what I left alone and why, my assumptions, and the Salesforce question.
+2. The corrected service, deployed and running:
+   https://kitchen-decision-service.onrender.com/kitchen (saved on my dashboard)
+   Source: https://github.com/YoussefAdelGad/kitchen-decision-service
+3. Architecture note (1 page, attached): how it works now, what changed structurally, the model and its cost per 1,000 orders, what breaks at ten times the volume, and the time spent.
+4. Executive slides (5, attached).
+
+Headline numbers, all on the same 150 practice orders:
+- As inherited: −1,964 AED
+- After the repairs: 3,816 AED (0 allergy incidents, 0 false alarms, 0 late minutes, 0 failed orders, 0 key accounts refused, 0 errors)
+- Time spent: about 4 hours (3 implementing, 1 documenting)
+
+The model used is openai/gpt-oss-20b on Groq, reading the customer note only; the code owns stock, the queue, the promise and the decision. Every step is measured and recorded in the repository.
+
+The service will stay up at the address above until after the live session.
+
+Best regards,
+Youssef Adel Gad

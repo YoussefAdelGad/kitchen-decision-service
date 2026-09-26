@@ -6,3 +6,5 @@ __pycache__/
 *.log
 tunnel.url
 service.original.py
+deliverables/*.pdf
+deliverables/~$*
