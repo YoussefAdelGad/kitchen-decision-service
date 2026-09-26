@@ -15,3 +15,5 @@ services:
         sync: false
       - key: SIGNATURE_MODE
         value: enforce
+      - key: KEEP_ALIVE_URL
+        value: https://kitchen-decision-service.onrender.com/kitchen

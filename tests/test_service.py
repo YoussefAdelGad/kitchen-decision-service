@@ -484,3 +484,32 @@ def test_hedge_does_not_fire_when_model_scoped_eaters_but_listed_no_allergens(cl
     monkeypatch.setattr(service, "read_note", lambda note: {**NONE, "allergens": [], "eater_items": ["garden_salad"]})
     r = order(client, ["chicken_wrap"], note="my wife is allergic to sesame but she is only having the salad, the rest is mine")
     assert r["allergy_risk"] is False
+
+
+# ---------------------------------------------------------------- keep-alive self-ping
+
+def test_keep_alive_loop_pings_and_survives_failures(monkeypatch):
+    import threading as _th
+    import requests as _rq
+    calls = []
+    answers = iter([None, _rq.exceptions.ConnectionError("down"), None])
+    def fake_get(url, timeout=None):
+        calls.append(url)
+        a = next(answers)
+        if a: raise a
+    monkeypatch.setattr(service.requests, "get", fake_get)
+    monkeypatch.setattr(service, "keep_alive_pings", 0)
+    stop = _th.Event()
+    t = _th.Thread(target=service.keep_alive_loop, args=("http://x/kitchen", 0.01, stop), daemon=True)
+    t.start()
+    for _ in range(200):
+        if len(calls) >= 3: break
+        _th.Event().wait(0.01)
+    stop.set(); t.join(timeout=1)
+    assert len(calls) >= 3 and all(c == "http://x/kitchen" for c in calls)
+    assert service.keep_alive_pings >= 2          # the failed ping did not stop the loop
+
+
+def test_health_reports_self_ping(client):
+    h = client.get("/kitchen").get_json()
+    assert "self_ping" in h and set(h["self_ping"]) == {"url", "count"}

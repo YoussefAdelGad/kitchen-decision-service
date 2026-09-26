@@ -422,13 +422,43 @@ def decide(order_id, items, minute, facts, allergy):
 
 @app.route("/kitchen", methods=["GET"])
 def health():
-    try:
-        return jsonify({"ok": True, "run": current_run, "accepted": accepted, "rejected": rejected,
-                        "signature_mode": SIGNATURE_MODE, "signature_failures": signature_failures,
-                        "station_free": station_free, "late_buffer": late_buffer,
-                        "stock": stock, "note_cache": len(NOTE_CACHE)})
-    except:
-        pass
+    # OLD: try: ... except: pass   (a bare except that swallowed everything)
+    return jsonify({"ok": True, "run": current_run, "accepted": accepted, "rejected": rejected,
+                    "signature_mode": SIGNATURE_MODE, "signature_failures": signature_failures,
+                    "station_free": station_free, "late_buffer": late_buffer,
+                    "stock": stock, "note_cache": len(NOTE_CACHE),
+                    "self_ping": {"url": KEEP_ALIVE_URL or None, "count": keep_alive_pings}})
+
+
+# ---------------------------------------------------------------------------
+# Keep-alive. Render's free instance sleeps after 15 idle minutes and takes 30-60 s to wake,
+# which would fail the arena's 10-second limit on the first orders of a shift. External
+# schedulers proved unreliable (GitHub Actions ran a */5 cron about every 5 hours), so the
+# service pings its own public address; Render counts that as traffic and never idles it.
+KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "")
+KEEP_ALIVE_SECONDS = int(os.environ.get("KEEP_ALIVE_SECONDS", "240"))
+keep_alive_pings = 0
+
+
+def keep_alive_loop(url, every, stop=None):
+    """GET `url` every `every` seconds until `stop` (a threading.Event) is set. Never raises."""
+    global keep_alive_pings
+    while not (stop and stop.is_set()):
+        try:
+            requests.get(url, timeout=25)
+            keep_alive_pings += 1
+        except requests.RequestException as e:
+            print("self-ping failed:", type(e).__name__)
+        if stop:
+            stop.wait(every)
+        else:
+            time.sleep(every)
+
+
+if KEEP_ALIVE_URL:
+    threading.Thread(target=keep_alive_loop, args=(KEEP_ALIVE_URL, KEEP_ALIVE_SECONDS),
+                     daemon=True, name="keep-alive").start()
+    print("self-ping every", KEEP_ALIVE_SECONDS, "s to", KEEP_ALIVE_URL)
 
 
 if __name__ == "__main__":
